@@ -1,3 +1,5 @@
+use std::cmp::min;
+
 use anyhow::{Context, Result};
 use colored::Colorize;
 use image::imageops::FilterType;
@@ -14,7 +16,7 @@ const ASCII: [&str; 6] = [
 // To slow
 pub fn get_image(url: &str, longest_text: &str) -> Result<Vec<String>> {
     let (w, _) = term_size::dimensions().context("Not able to get width")?;
-    let image_width = w - format!("         {}", longest_text).len();
+    let image_width = min(w - format!("         {}", longest_text).len(), 128);
 
     let bytes = get(url)?.bytes()?;
     // FIX : improve, the blur is too slow
