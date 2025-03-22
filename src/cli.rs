@@ -1,6 +1,7 @@
 use anyhow::Result;
 use clap::{Parser, ValueEnum};
 
+/// Neofetch-like tool to get recipes
 #[derive(Parser, Debug)]
 #[command(name = "Foodfetch")]
 #[command(author = "noahcode")]
@@ -19,17 +20,20 @@ pub struct Cli {
     pub keyword: Option<String>,
 
     /// The infos you want to display
-    #[arg(short, long, default_value = "all")]
-    pub infos: Infos,
+    #[arg(short, long, default_value = "all", value_delimiter = ',')]
+    pub infos: Vec<Info>,
 }
 
 #[derive(ValueEnum, Clone, Debug, PartialEq, Eq, Copy)]
-pub enum Infos {
+pub enum Info {
     /// Display all available informations
     All,
 
-    /// Ignore the links
-    Reduced,
+    /// Give the links
+    Links,
+
+    /// Give the instructions to cook the meal
+    Instructions,
 }
 
 pub fn args() -> Result<Cli> {

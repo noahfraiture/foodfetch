@@ -1,4 +1,4 @@
-use std::thread;
+use std::{sync::Arc, thread};
 
 use recipe::DisplayRecipe;
 
@@ -13,10 +13,16 @@ fn main() {
     } else {
         recipe::Recipes::random().unwrap()
     };
+    let infos = Arc::new(args.infos);
     let handles: Vec<_> = recipes
         .meals
         .into_iter()
-        .map(|meal| thread::spawn(move || meal.to_display_recipe(args.infos)))
+        .map(|meal| {
+            thread::spawn({
+                let infos = infos.clone();
+                move || meal.to_display_recipe(infos)
+            })
+        })
         .collect();
     let display_recipes: Vec<DisplayRecipe> = handles
         .into_iter()

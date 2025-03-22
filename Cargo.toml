@@ -2,6 +2,14 @@
 name = "foodfetch"
 version = "0.1.0"
 edition = "2024"
+authors = ["Noah <pro@noahcode.dev>"]
+license = "MIT"
+description = "Foodfetch is a lightweight neofetch-like command-line tool designed for to get recipe"
+repository = "https://github.com/noahfraiture/foodfetch"
+readme = "README.md"
+keywords = ["neofetch", "fetch", "cli", "food", "recipe"]
+categories = ["programming"]
+
 
 [dependencies]
 anyhow = "1.0.97"

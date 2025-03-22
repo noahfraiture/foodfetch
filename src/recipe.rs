@@ -3,11 +3,11 @@ use colored::Colorize;
 use reqwest::blocking::get;
 use serde::{Deserialize, Serialize};
 use serde_json::from_str;
+use std::sync::Arc;
 use std::{cmp::max, fmt};
 
 use crate::ascii;
-use crate::cli;
-use crate::cli::Infos;
+use crate::cli::Info;
 
 #[derive(Debug)]
 pub struct DisplayRecipe {
@@ -16,11 +16,12 @@ pub struct DisplayRecipe {
     category: String,
     area: String,
     ingredients: Vec<(String, String)>,
-    tutorial: String,
-    youtube: String,
+    instructions: String,
+    tutorial_url: String,
+    youtube_url: String,
     image_url: String,
     image_msg: Vec<String>,
-    infos: cli::Infos,
+    infos: Arc<Vec<Info>>,
 }
 
 impl fmt::Display for DisplayRecipe {
@@ -45,17 +46,45 @@ impl fmt::Display for DisplayRecipe {
         for (ingredient, quantity) in &self.ingredients {
             start_lines.push(format!("\t\t - {ingredient} ({quantity})"));
         }
-        if self.infos == cli::Infos::All && !self.tutorial.is_empty() {
-            end_lines.push(format!("\t{} :", "Tutorial".red()));
-            end_lines.push(format!("\t {}", self.tutorial));
+
+        if self
+            .infos
+            .iter()
+            .any(|i| i == &Info::All || i == &Info::Links)
+        {
+            if !self.tutorial_url.is_empty() {
+                end_lines.push(format!("\t{} :", "Tutorial".red()));
+                end_lines.push(format!("\t {}", self.tutorial_url));
+            }
+            if !self.youtube_url.is_empty() {
+                end_lines.push(format!("\t{} :", "Youtube".red()));
+                end_lines.push(format!("\t {}", self.youtube_url));
+            }
+            if !self.image_url.is_empty() {
+                end_lines.push(format!("\t{} :", "Image url".red()));
+                end_lines.push(format!("\t {}", self.image_url));
+            }
         }
-        if self.infos == cli::Infos::All && !self.youtube.is_empty() {
-            end_lines.push(format!("\t{} :", "Youtube".red()));
-            end_lines.push(format!("\t {}", self.youtube));
-        }
-        if self.infos == cli::Infos::All && !self.image_url.is_empty() {
-            end_lines.push(format!("\t{} :", "Image url".red()));
-            end_lines.push(format!("\t {}", self.image_url));
+
+        let longest_line = start_lines
+            .iter()
+            .chain(end_lines.iter())
+            .map(|line| line.len())
+            .max()
+            .unwrap();
+        if self
+            .infos
+            .iter()
+            .any(|i| i == &Info::All || i == &Info::Instructions)
+            && !self.instructions.is_empty()
+        {
+            start_lines.push(format!("\t{}", "Instructions : ".red()));
+            self.instructions.split("\n").for_each(|s| {
+                s.as_bytes()
+                    .chunks(longest_line - 2)
+                    .map(|chunk| std::str::from_utf8(chunk).unwrap())
+                    .for_each(|sub| start_lines.push(format!("\t {}", sub)))
+            });
         }
 
         for (index, line) in start_lines.iter().enumerate() {
@@ -77,7 +106,7 @@ impl fmt::Display for DisplayRecipe {
 }
 
 impl Recipe {
-    pub fn to_display_recipe(self, infos: Infos) -> DisplayRecipe {
+    pub fn to_display_recipe(self, infos: Arc<Vec<Info>>) -> DisplayRecipe {
         let ingredients = vec![
             (self.strIngredient1, self.strMeasure1),
             (self.strIngredient2, self.strMeasure2),
@@ -111,13 +140,21 @@ impl Recipe {
         let title = self.strMeal.unwrap_or_default();
         let category = self.strCategory.unwrap_or_default();
         let area = self.strArea.unwrap_or_default();
-        let tutorial = self.strSource.unwrap_or_default();
-        let youtube = self.strYoutube.unwrap_or_default();
+        let instructions = self.strInstructions.unwrap_or_default();
+        let tutorial_url = self.strSource.unwrap_or_default();
+        let youtube_url = self.strYoutube.unwrap_or_default();
         let image_url = self.strMealThumb.unwrap_or_default();
 
-        let longest_text = [&title, &category, &area, &tutorial, &youtube, &image_url]
-            .iter()
-            .fold("", |old, new| if old.len() > new.len() { old } else { new });
+        let longest_text = [
+            &title,
+            &category,
+            &area,
+            &tutorial_url,
+            &youtube_url,
+            &image_url,
+        ]
+        .iter()
+        .fold("", |old, new| if old.len() > new.len() { old } else { new });
         let image = if image_url.is_empty() {
             Vec::default()
         } else {
@@ -129,8 +166,9 @@ impl Recipe {
             category,
             area,
             ingredients,
-            tutorial,
-            youtube,
+            instructions,
+            tutorial_url,
+            youtube_url,
             image_url,
             image_msg: image,
             infos,
