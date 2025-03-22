@@ -455,6 +455,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "strsim",
  "term_size",
 ]
 

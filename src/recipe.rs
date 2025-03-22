@@ -8,6 +8,61 @@ use std::{cmp::max, fmt};
 
 use crate::ascii;
 use crate::cli::Info;
+use strsim::levenshtein;
+
+fn capitalize_each_word(s: &str) -> String {
+    s.split_whitespace()
+        .map(|word| {
+            let mut c = word.chars();
+            match c.next() {
+                Some(first) => first.to_uppercase().collect::<String>() + c.as_str(),
+                None => String::new(),
+            }
+        })
+        .collect::<Vec<String>>()
+        .join(" ")
+}
+
+fn fetch_all_meal_names() -> Vec<String> {
+    let mut all_names = Vec::new();
+    for c in 'a'..='z' {
+        let url = format!("https://www.themealdb.com/api/json/v1/1/search.php?f={}", c);
+        if let Ok(response) = get(&url).and_then(|r| r.json::<Recipes>()) {
+            if let Some(meals) = response.meals {
+                all_names.extend(meals.into_iter().filter_map(|r| r.strMeal));
+            }
+        }
+    }
+    all_names
+}
+
+pub fn search_with_fuzzy(keyword: &str) -> Result<Recipes> {
+    let original = keyword.trim();
+    let lowercase = original.to_lowercase();
+    let capitalized = capitalize_each_word(&lowercase);
+
+    match Recipes::search(&lowercase).or_else(|_| Recipes::search(&capitalized)) {
+        Ok(r) => Ok(r),
+        Err(_) => {
+            let all_names = fetch_all_meal_names();
+            if let Some(best_match) = all_names
+                .iter()
+                .min_by_key(|name| levenshtein(&name.to_lowercase(), &lowercase))
+            {
+                println!("⚠️  No exact match found for \"{}\".", original);
+                println!("💡 Did you mean: \"{}\"? Trying that...", best_match);
+                match Recipes::search(best_match) {
+                    Ok(r) => Ok(r),
+                    Err(_) => {
+                        anyhow::bail!("❌ Still couldn't find anything for \"{}\".", original)
+                    }
+                }
+            } else {
+                anyhow::bail!("❌ No recipes found and no close match for \"{}\".", original)
+            }
+        }
+    }
+}
 
 #[derive(Debug)]
 pub struct DisplayRecipe {
@@ -71,7 +126,7 @@ impl fmt::Display for DisplayRecipe {
             .chain(end_lines.iter())
             .map(|line| line.len())
             .max()
-            .unwrap();
+            .unwrap_or(80);
         if self
             .infos
             .iter()
@@ -178,17 +233,21 @@ impl Recipe {
 
 #[derive(Serialize, Deserialize, Default)]
 pub struct Recipes {
-    pub meals: Vec<Recipe>,
+    pub meals: Option<Vec<Recipe>>,
 }
 
 impl Recipes {
     pub fn random() -> Result<Self> {
         Ok(get("https://www.themealdb.com/api/json/v1/1/random.php")?.json::<Recipes>()?)
     }
-
+    
     pub fn search(keyword: &str) -> Result<Self> {
         let url = format!("https://www.themealdb.com/api/json/v1/1/search.php?s={keyword}");
-        Ok(get(url)?.json::<Recipes>()?)
+        let response = get(url)?.json::<Recipes>()?;
+        if response.meals.is_none() {
+            anyhow::bail!("No meals found for keyword: {keyword}");
+        }
+        Ok(response)
     }
 }
 
@@ -196,7 +255,7 @@ impl Recipes {
 #[derive(Serialize, Deserialize, Default)]
 pub struct Recipe {
     idMeal: Option<String>,
-    strMeal: Option<String>,
+    pub strMeal: Option<String>,
     strMealAlternate: Option<String>,
     strCategory: Option<String>,
     strArea: Option<String>,
