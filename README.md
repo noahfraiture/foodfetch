@@ -7,6 +7,8 @@ Except here you fetch food recipe and ideas. It uses the API of [TheMealDB](http
 This is an example of output you can get
 ![screenshop](./imgs/screenshot.png)
 
+## Usage
+
 You can find the options with the argument `--help`
 ```
 Foodfetch - Neofetch-like tool to get recipes
@@ -30,3 +32,7 @@ Options:
   -V, --version
           Print version
 ```
+
+## Installation
+
+I've published the package, so you can simply run `cargo install foodfetch`

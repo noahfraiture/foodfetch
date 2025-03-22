@@ -8,7 +8,6 @@ description = "Foodfetch is a lightweight neofetch-like command-line tool design
 repository = "https://github.com/noahfraiture/foodfetch"
 readme = "README.md"
 keywords = ["neofetch", "fetch", "cli", "food", "recipe"]
-categories = ["programming"]
 
 
 [dependencies]
