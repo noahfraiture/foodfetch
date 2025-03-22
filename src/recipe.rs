@@ -5,7 +5,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::from_str;
 use std::sync::Arc;
 use std::{cmp::max, fmt};
-
 use crate::ascii;
 use crate::cli::Info;
 use strsim::levenshtein;
@@ -40,7 +39,6 @@ pub fn search_with_fuzzy(keyword: &str) -> Result<Recipes> {
     let original = keyword.trim();
     let lowercase = original.to_lowercase();
     let capitalized = capitalize_each_word(&lowercase);
-
     match Recipes::search(&lowercase).or_else(|_| Recipes::search(&capitalized)) {
         Ok(r) => Ok(r),
         Err(_) => {
@@ -84,12 +82,7 @@ impl fmt::Display for DisplayRecipe {
         let mut image = self.image_msg.clone();
         let mut start_lines: Vec<String> = Vec::new();
         let mut end_lines: Vec<String> = Vec::new();
-        start_lines.push(format!(
-            "\t{} : {} ({})",
-            "Title".red(),
-            self.title,
-            self.id
-        ));
+        start_lines.push(format!("\t{} : {} ({})", "Title".red(), self.title, self.id));
         start_lines.push(format!("\t{}", "----".red()));
         if !self.category.is_empty() {
             start_lines.push(format!("\t{} : {}", "Category".red(), self.category));
@@ -101,12 +94,7 @@ impl fmt::Display for DisplayRecipe {
         for (ingredient, quantity) in &self.ingredients {
             start_lines.push(format!("\t\t - {ingredient} ({quantity})"));
         }
-
-        if self
-            .infos
-            .iter()
-            .any(|i| i == &Info::All || i == &Info::Links)
-        {
+        if self.infos.iter().any(|i| i == &Info::All || i == &Info::Links) {
             if !self.tutorial_url.is_empty() {
                 end_lines.push(format!("\t{} :", "Tutorial".red()));
                 end_lines.push(format!("\t {}", self.tutorial_url));
@@ -120,39 +108,37 @@ impl fmt::Display for DisplayRecipe {
                 end_lines.push(format!("\t {}", self.image_url));
             }
         }
-
         let longest_line = start_lines
             .iter()
             .chain(end_lines.iter())
             .map(|line| line.len())
             .max()
             .unwrap_or(80);
-        if self
-            .infos
-            .iter()
-            .any(|i| i == &Info::All || i == &Info::Instructions)
+        let chunk_size = longest_line.saturating_sub(2).max(1);
+        if self.infos.iter().any(|i| i == &Info::All || i == &Info::Instructions)
             && !self.instructions.is_empty()
         {
             start_lines.push(format!("\t{}", "Instructions : ".red()));
-            self.instructions.split("\n").for_each(|s| {
+            self.instructions.split('\n').for_each(|s| {
                 s.as_bytes()
-                    .chunks(longest_line - 2)
+                    .chunks(chunk_size)
                     .map(|chunk| std::str::from_utf8(chunk).unwrap())
-                    .for_each(|sub| start_lines.push(format!("\t {}", sub)))
+                    .for_each(|sub| start_lines.push(format!("\t {}", sub)));
             });
         }
-
+        let needed_for_start = start_lines.len() + 1;
+        if image.len() < needed_for_start {
+            image.resize(needed_for_start, String::new());
+        }
         for (index, line) in start_lines.iter().enumerate() {
-            if image.len() <= index + 1 {
-                break;
-            }
             image[index + 1].push_str(line);
         }
-        let start_of_end = max(image.len() - end_lines.len(), start_lines.len() + 1);
+        let start_of_end = max(image.len().saturating_sub(end_lines.len()), start_lines.len() + 1);
+        let needed_for_end = start_of_end + end_lines.len();
+        if image.len() < needed_for_end {
+            image.resize(needed_for_end, String::new());
+        }
         for (index, line) in end_lines.iter().enumerate() {
-            if image.len() <= index + start_of_end {
-                break;
-            }
             image[index + start_of_end].push_str(line);
         }
         let image = image.join("\n");
@@ -190,7 +176,7 @@ impl Recipe {
                 (Some(ing), Some(qty)) if !ing.is_empty() && !qty.is_empty() => Some((ing, qty)),
                 _ => None,
             })
-            .collect::<Vec<(String, String)>>();
+            .collect::<Vec<_>>();
         let id = from_str::<u32>(&self.idMeal.unwrap_or_default()).unwrap_or(0);
         let title = self.strMeal.unwrap_or_default();
         let category = self.strCategory.unwrap_or_default();
@@ -199,7 +185,6 @@ impl Recipe {
         let tutorial_url = self.strSource.unwrap_or_default();
         let youtube_url = self.strYoutube.unwrap_or_default();
         let image_url = self.strMealThumb.unwrap_or_default();
-
         let longest_text = [
             &title,
             &category,
@@ -211,7 +196,7 @@ impl Recipe {
         .iter()
         .fold("", |old, new| if old.len() > new.len() { old } else { new });
         let image = if image_url.is_empty() {
-            Vec::default()
+            Vec::new()
         } else {
             ascii::get_image(&image_url, longest_text).unwrap_or_default()
         };
@@ -240,7 +225,6 @@ impl Recipes {
     pub fn random() -> Result<Self> {
         Ok(get("https://www.themealdb.com/api/json/v1/1/random.php")?.json::<Recipes>()?)
     }
-    
     pub fn search(keyword: &str) -> Result<Self> {
         let url = format!("https://www.themealdb.com/api/json/v1/1/search.php?s={keyword}");
         let response = get(url)?.json::<Recipes>()?;
