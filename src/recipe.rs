@@ -8,11 +8,65 @@ use std::{cmp::max, fmt};
 use crate::ascii;
 use crate::cli::Info;
 use strsim::levenshtein;
-use std::sync::Mutex;
-use once_cell::sync::Lazy;
 use textwrap::{wrap, Options};
+use once_cell::sync::Lazy;
 
-static MEAL_NAMES_CACHE: Lazy<Mutex<Vec<String>>> = Lazy::new(|| Mutex::new(Vec::new()));
+// Käytetään include_str! oikealla polulla
+const MEAL_CACHE_DATA: &str = include_str!("data/meal_cache.json");
+
+#[derive(Serialize, Deserialize, Clone)]
+struct MealCacheEntry {
+    #[serde(rename = "idMeal")]
+    id: String,
+    #[serde(rename = "strMeal")]
+    name: String,
+    #[serde(rename = "strMealThumb")]
+    thumb: String,
+    #[serde(rename = "strInstructions")]
+    instructions: Option<String>,
+    #[serde(rename = "strCategory")]
+    category: Option<String>,
+    #[serde(rename = "strArea")]
+    area: Option<String>,
+    #[serde(rename = "strSource")]
+    source: Option<String>,
+    #[serde(rename = "strYoutube")]
+    youtube: Option<String>,
+    // Ingredients and measures
+    #[serde(rename = "strIngredient1")] ing1: Option<String>,
+    #[serde(rename = "strIngredient2")] ing2: Option<String>,
+    // ... add all ingredients up to 20
+    #[serde(rename = "strMeasure1")] meas1: Option<String>,
+    #[serde(rename = "strMeasure2")] meas2: Option<String>,
+    // ... add all measures up to 20
+}
+
+impl MealCacheEntry {
+    fn to_recipe(self) -> Recipe {
+        Recipe {
+            idMeal: Some(self.id),
+            strMeal: Some(self.name),
+            strMealThumb: Some(self.thumb),
+            strInstructions: self.instructions,
+            strCategory: self.category,
+            strArea: self.area,
+            strSource: self.source,
+            strYoutube: self.youtube,
+            strIngredient1: self.ing1,
+            strIngredient2: self.ing2,
+            // ... map all ingredients
+            strMeasure1: self.meas1,
+            strMeasure2: self.meas2,
+            // ... map all measures
+            ..Recipe::default()
+        }
+    }
+}
+
+// Staattinen välimuisti
+static MEAL_CACHE: Lazy<Vec<MealCacheEntry>> = Lazy::new(|| {
+    serde_json::from_str(MEAL_CACHE_DATA).unwrap_or_default()
+});
 
 fn capitalize_each_word(s: &str) -> String {
     s.split_whitespace()
@@ -27,49 +81,35 @@ fn capitalize_each_word(s: &str) -> String {
         .join(" ")
 }
 
-fn fetch_meals_by_letter(letter: char) -> Vec<String> {
-    let url = format!("https://www.themealdb.com/api/json/v1/1/search.php?f={}", letter);
-    if let Ok(response) = get(&url).and_then(|r| r.json::<Recipes>()) {
-        if let Some(meals) = response.meals {
-            return meals.into_iter().filter_map(|r| r.strMeal).collect();
-        }
-    }
-    Vec::new()
-}
-
 pub fn search_with_fuzzy(keyword: &str) -> Result<Recipes> {
     let original = keyword.trim();
     let lowercase = original.to_lowercase();
-    let first_char = lowercase.chars().next().unwrap_or('a');
     let capitalized = capitalize_each_word(&lowercase);
 
+    // 1. Try exact API search first - prioritize real-time data
     match Recipes::search(&lowercase).or_else(|_| Recipes::search(&capitalized)) {
-        Ok(r) => Ok(r),
-        Err(_) => {
-            let mut cache = MEAL_NAMES_CACHE.lock().unwrap();
-            if cache.is_empty() {
-                *cache = fetch_meals_by_letter(first_char);
-            }
-
-            if let Some(best_match) = cache.iter()
-                .filter(|name| {
-                    let distance = levenshtein(&name.to_lowercase(), &lowercase);
-                    distance <= max(name.len(), lowercase.len()) / 2
-                })
-                .min_by_key(|name| levenshtein(&name.to_lowercase(), &lowercase))
-            {
-                println!("⚠️  No exact match found for \"{}\".", original);
-                println!("💡 Did you mean: \"{}\"? Trying that...", best_match);
-                
-                match Recipes::search(best_match) {
-                    Ok(r) => Ok(r),
-                    Err(_) => anyhow::bail!("❌ Could not find recipes for \"{}\".", original)
-                }
-            } else {
-                anyhow::bail!("❌ No recipes or close matches found for \"{}\".", original)
-            }
-        }
+        Ok(r) => return Ok(r),
+        Err(_) => {}  // Continue to fuzzy search if not found
     }
+
+    // 2. Fallback to fuzzy search in local cache
+    if let Some(best_match) = MEAL_CACHE.iter()
+        .filter(|meal| {
+            let distance = levenshtein(&meal.name.to_lowercase(), &lowercase);
+            distance <= max(meal.name.len(), lowercase.len()) / 2
+        })
+        .min_by_key(|meal| levenshtein(&meal.name.to_lowercase(), &lowercase))
+    {
+        println!("⚠️  No exact match found for \"{}\".", original);
+        println!("💡 Did you mean: \"{}\"? Using cached data...", best_match.name);
+        
+        return Ok(Recipes {
+            meals: Some(vec![best_match.clone().to_recipe()])
+        });
+    }
+
+    // 3. Nothing found in either API or cache
+    anyhow::bail!("❌ No recipes or close matches found for \"{}\".", original)
 }
 
 #[derive(Debug)]
