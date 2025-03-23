@@ -11,7 +11,6 @@ use strsim::levenshtein;
 use textwrap::{wrap, Options};
 use once_cell::sync::Lazy;
 
-// Käytetään include_str! oikealla polulla
 const MEAL_CACHE_DATA: &str = include_str!("data/meal_cache.json");
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -32,13 +31,10 @@ struct MealCacheEntry {
     source: Option<String>,
     #[serde(rename = "strYoutube")]
     youtube: Option<String>,
-    // Ingredients and measures
     #[serde(rename = "strIngredient1")] ing1: Option<String>,
     #[serde(rename = "strIngredient2")] ing2: Option<String>,
-    // ... add all ingredients up to 20
     #[serde(rename = "strMeasure1")] meas1: Option<String>,
     #[serde(rename = "strMeasure2")] meas2: Option<String>,
-    // ... add all measures up to 20
 }
 
 impl MealCacheEntry {
@@ -54,16 +50,13 @@ impl MealCacheEntry {
             strYoutube: self.youtube,
             strIngredient1: self.ing1,
             strIngredient2: self.ing2,
-            // ... map all ingredients
             strMeasure1: self.meas1,
             strMeasure2: self.meas2,
-            // ... map all measures
             ..Recipe::default()
         }
     }
 }
 
-// Staattinen välimuisti
 static MEAL_CACHE: Lazy<Vec<MealCacheEntry>> = Lazy::new(|| {
     serde_json::from_str(MEAL_CACHE_DATA).unwrap_or_default()
 });
@@ -86,13 +79,11 @@ pub fn search_with_fuzzy(keyword: &str) -> Result<Recipes> {
     let lowercase = original.to_lowercase();
     let capitalized = capitalize_each_word(&lowercase);
 
-    // 1. Try exact API search first - prioritize real-time data
     match Recipes::search(&lowercase).or_else(|_| Recipes::search(&capitalized)) {
         Ok(r) => return Ok(r),
-        Err(_) => {}  // Continue to fuzzy search if not found
+        Err(_) => {}  
     }
 
-    // 2. Fallback to fuzzy search in local cache
     if let Some(best_match) = MEAL_CACHE.iter()
         .filter(|meal| {
             let distance = levenshtein(&meal.name.to_lowercase(), &lowercase);
@@ -108,7 +99,6 @@ pub fn search_with_fuzzy(keyword: &str) -> Result<Recipes> {
         });
     }
 
-    // 3. Nothing found in either API or cache
     anyhow::bail!("❌ No recipes or close matches found for \"{}\".", original)
 }
 

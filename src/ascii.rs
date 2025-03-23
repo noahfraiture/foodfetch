@@ -9,7 +9,7 @@ const ASCII: [&str; 6] = [
     "$", "@", "%", "&", "#", "*",
 ];
 
-const MAX_WIDTH: u32 = 128;
+const MAX_WIDTH: usize = 128;
 
 // To slow
 pub fn get_image(url: &str, longest_text: &str) -> Result<Vec<String>> {
