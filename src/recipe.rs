@@ -5,9 +5,72 @@ use serde::{Deserialize, Serialize};
 use serde_json::from_str;
 use std::sync::Arc;
 use std::{cmp::max, fmt};
-
 use crate::ascii;
 use crate::cli::Info;
+use strsim::levenshtein;
+use std::sync::Mutex;
+use once_cell::sync::Lazy;
+use textwrap::{wrap, Options};
+
+static MEAL_NAMES_CACHE: Lazy<Mutex<Vec<String>>> = Lazy::new(|| Mutex::new(Vec::new()));
+
+fn capitalize_each_word(s: &str) -> String {
+    s.split_whitespace()
+        .map(|word| {
+            let mut c = word.chars();
+            match c.next() {
+                Some(first) => first.to_uppercase().collect::<String>() + c.as_str(),
+                None => String::new(),
+            }
+        })
+        .collect::<Vec<String>>()
+        .join(" ")
+}
+
+fn fetch_meals_by_letter(letter: char) -> Vec<String> {
+    let url = format!("https://www.themealdb.com/api/json/v1/1/search.php?f={}", letter);
+    if let Ok(response) = get(&url).and_then(|r| r.json::<Recipes>()) {
+        if let Some(meals) = response.meals {
+            return meals.into_iter().filter_map(|r| r.strMeal).collect();
+        }
+    }
+    Vec::new()
+}
+
+pub fn search_with_fuzzy(keyword: &str) -> Result<Recipes> {
+    let original = keyword.trim();
+    let lowercase = original.to_lowercase();
+    let first_char = lowercase.chars().next().unwrap_or('a');
+    let capitalized = capitalize_each_word(&lowercase);
+
+    match Recipes::search(&lowercase).or_else(|_| Recipes::search(&capitalized)) {
+        Ok(r) => Ok(r),
+        Err(_) => {
+            let mut cache = MEAL_NAMES_CACHE.lock().unwrap();
+            if cache.is_empty() {
+                *cache = fetch_meals_by_letter(first_char);
+            }
+
+            if let Some(best_match) = cache.iter()
+                .filter(|name| {
+                    let distance = levenshtein(&name.to_lowercase(), &lowercase);
+                    distance <= max(name.len(), lowercase.len()) / 2
+                })
+                .min_by_key(|name| levenshtein(&name.to_lowercase(), &lowercase))
+            {
+                println!("⚠️  No exact match found for \"{}\".", original);
+                println!("💡 Did you mean: \"{}\"? Trying that...", best_match);
+                
+                match Recipes::search(best_match) {
+                    Ok(r) => Ok(r),
+                    Err(_) => anyhow::bail!("❌ Could not find recipes for \"{}\".", original)
+                }
+            } else {
+                anyhow::bail!("❌ No recipes or close matches found for \"{}\".", original)
+            }
+        }
+    }
+}
 
 #[derive(Debug)]
 pub struct DisplayRecipe {
@@ -26,15 +89,15 @@ pub struct DisplayRecipe {
 
 impl fmt::Display for DisplayRecipe {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut image = self.image_msg.clone();
+        let show_instructions = self.infos.iter().any(|i| i == &Info::All || i == &Info::Instructions);
+        let show_links = self.infos.iter().any(|i| i == &Info::All || i == &Info::Links);
+        let show_image = self.infos.iter().any(|i| i == &Info::All);
+
+        let mut image = if show_image { self.image_msg.clone() } else { Vec::new() };
         let mut start_lines: Vec<String> = Vec::new();
         let mut end_lines: Vec<String> = Vec::new();
-        start_lines.push(format!(
-            "\t{} : {} ({})",
-            "Title".red(),
-            self.title,
-            self.id
-        ));
+
+        start_lines.push(format!("\t{} : {} ({})", "Title".red(), self.title, self.id));
         start_lines.push(format!("\t{}", "----".red()));
         if !self.category.is_empty() {
             start_lines.push(format!("\t{} : {}", "Category".red(), self.category));
@@ -44,14 +107,10 @@ impl fmt::Display for DisplayRecipe {
         }
         start_lines.push(format!("\t{}", "Ingredients : ".red()));
         for (ingredient, quantity) in &self.ingredients {
-            start_lines.push(format!("\t\t - {ingredient} ({quantity})"));
+            start_lines.push(format!("\t\t - {ing} ({qty})", ing = ingredient, qty = quantity));
         }
 
-        if self
-            .infos
-            .iter()
-            .any(|i| i == &Info::All || i == &Info::Links)
-        {
+        if show_links {
             if !self.tutorial_url.is_empty() {
                 end_lines.push(format!("\t{} :", "Tutorial".red()));
                 end_lines.push(format!("\t {}", self.tutorial_url));
@@ -66,129 +125,124 @@ impl fmt::Display for DisplayRecipe {
             }
         }
 
-        let longest_line = start_lines
-            .iter()
-            .chain(end_lines.iter())
-            .map(|line| line.len())
-            .max()
-            .unwrap();
-        if self
-            .infos
-            .iter()
-            .any(|i| i == &Info::All || i == &Info::Instructions)
-            && !self.instructions.is_empty()
-        {
-            start_lines.push(format!("\t{}", "Instructions : ".red()));
-            self.instructions.split("\n").for_each(|s| {
-                s.as_bytes()
-                    .chunks(longest_line - 2)
-                    .map(|chunk| std::str::from_utf8(chunk).unwrap())
-                    .for_each(|sub| start_lines.push(format!("\t {}", sub)))
-            });
+        let needed_height = if show_image {
+            max(start_lines.len() + end_lines.len() + 1, image.len().max(20))
+        } else {
+            start_lines.len() + end_lines.len() + 1
+        };
+        
+        if image.len() < needed_height {
+            image.resize(needed_height, String::new());
         }
 
+        let needed_for_start = start_lines.len() + 1;
+        if image.len() < needed_for_start {
+            image.resize(needed_for_start, String::new());
+        }
         for (index, line) in start_lines.iter().enumerate() {
-            if image.len() <= index + 1 {
-                break;
-            }
             image[index + 1].push_str(line);
         }
-        let start_of_end = max(image.len() - end_lines.len(), start_lines.len() + 1);
+        let start_of_end = max(image.len().saturating_sub(end_lines.len()), start_lines.len() + 1);
+        let needed_for_end = start_of_end + end_lines.len();
+        if image.len() < needed_for_end {
+            image.resize(needed_for_end, String::new());
+        }
         for (index, line) in end_lines.iter().enumerate() {
-            if image.len() <= index + start_of_end {
-                break;
-            }
             image[index + start_of_end].push_str(line);
         }
-        let image = image.join("\n");
-        write!(f, "{image}")
+
+        write!(f, "{}", image.join("\n"))?;
+
+        if show_instructions && !self.instructions.is_empty() {
+            write!(f, "\n\n\t{}\n", "Instructions : ".red())?;
+            
+            let options = Options::new(80)
+                .initial_indent("\t ")
+                .subsequent_indent("\t ");
+                
+            for line in wrap(&self.instructions, &options) {
+                writeln!(f, "{}", line)?;
+            }
+        }
+
+        Ok(())
     }
 }
 
 impl Recipe {
     pub fn to_display_recipe(self, infos: Arc<Vec<Info>>) -> DisplayRecipe {
-        let ingredients = vec![
-            (self.strIngredient1, self.strMeasure1),
-            (self.strIngredient2, self.strMeasure2),
-            (self.strIngredient3, self.strMeasure3),
-            (self.strIngredient4, self.strMeasure4),
-            (self.strIngredient5, self.strMeasure5),
-            (self.strIngredient6, self.strMeasure6),
-            (self.strIngredient7, self.strMeasure7),
-            (self.strIngredient8, self.strMeasure8),
-            (self.strIngredient9, self.strMeasure9),
-            (self.strIngredient10, self.strMeasure10),
-            (self.strIngredient11, self.strMeasure11),
-            (self.strIngredient12, self.strMeasure12),
-            (self.strIngredient13, self.strMeasure13),
-            (self.strIngredient14, self.strMeasure14),
-            (self.strIngredient15, self.strMeasure15),
-            (self.strIngredient16, self.strMeasure16),
-            (self.strIngredient17, self.strMeasure17),
-            (self.strIngredient18, self.strMeasure18),
-            (self.strIngredient19, self.strMeasure19),
-            (self.strIngredient20, self.strMeasure20),
-        ];
-        let ingredients = ingredients
-            .into_iter()
+        let show_image = infos.iter().any(|i| i == &Info::All);
+        let image = if show_image && !self.strMealThumb.as_ref().unwrap_or(&String::new()).is_empty() {
+            ascii::get_image(
+                self.strMealThumb.as_ref().unwrap(),
+                self.strMeal.as_ref().unwrap_or(&String::new())
+            ).unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+              
+        DisplayRecipe {
+            id: from_str::<u32>(self.idMeal.as_ref().unwrap_or(&String::new())).unwrap_or(0),
+            title: self.strMeal.as_ref().unwrap_or(&String::new()).to_string(),
+            category: self.strCategory.as_ref().unwrap_or(&String::new()).to_string(),
+            area: self.strArea.as_ref().unwrap_or(&String::new()).to_string(),
+            ingredients: self.get_ingredients(),
+            instructions: self.strInstructions.as_ref().unwrap_or(&String::new()).to_string(),
+            tutorial_url: self.strSource.as_ref().unwrap_or(&String::new()).to_string(),
+            youtube_url: self.strYoutube.as_ref().unwrap_or(&String::new()).to_string(),
+            image_url: self.strMealThumb.as_ref().unwrap_or(&String::new()).to_string(),
+            image_msg: image,
+            infos,
+        }
+    }
+
+    fn get_ingredients(&self) -> Vec<(String, String)> {
+        vec![
+            (self.strIngredient1.clone(), self.strMeasure1.clone()),
+            (self.strIngredient2.clone(), self.strMeasure2.clone()),
+            (self.strIngredient3.clone(), self.strMeasure3.clone()),
+            (self.strIngredient4.clone(), self.strMeasure4.clone()),
+            (self.strIngredient5.clone(), self.strMeasure5.clone()),
+            (self.strIngredient6.clone(), self.strMeasure6.clone()),
+            (self.strIngredient7.clone(), self.strMeasure7.clone()),
+            (self.strIngredient8.clone(), self.strMeasure8.clone()),
+            (self.strIngredient9.clone(), self.strMeasure9.clone()),
+            (self.strIngredient10.clone(), self.strMeasure10.clone()),
+            (self.strIngredient11.clone(), self.strMeasure11.clone()),
+            (self.strIngredient12.clone(), self.strMeasure12.clone()),
+            (self.strIngredient13.clone(), self.strMeasure13.clone()),
+            (self.strIngredient14.clone(), self.strMeasure14.clone()),
+            (self.strIngredient15.clone(), self.strMeasure15.clone()),
+            (self.strIngredient16.clone(), self.strMeasure16.clone()),
+            (self.strIngredient17.clone(), self.strMeasure17.clone()),
+            (self.strIngredient18.clone(), self.strMeasure18.clone()),
+            (self.strIngredient19.clone(), self.strMeasure19.clone()),
+            (self.strIngredient20.clone(), self.strMeasure20.clone()),
+        ].into_iter()
             .filter_map(|(ingredient, quantity)| match (ingredient, quantity) {
                 (Some(ing), Some(qty)) if !ing.is_empty() && !qty.is_empty() => Some((ing, qty)),
                 _ => None,
             })
-            .collect::<Vec<(String, String)>>();
-        let id = from_str::<u32>(&self.idMeal.unwrap_or_default()).unwrap_or(0);
-        let title = self.strMeal.unwrap_or_default();
-        let category = self.strCategory.unwrap_or_default();
-        let area = self.strArea.unwrap_or_default();
-        let instructions = self.strInstructions.unwrap_or_default();
-        let tutorial_url = self.strSource.unwrap_or_default();
-        let youtube_url = self.strYoutube.unwrap_or_default();
-        let image_url = self.strMealThumb.unwrap_or_default();
-
-        let longest_text = [
-            &title,
-            &category,
-            &area,
-            &tutorial_url,
-            &youtube_url,
-            &image_url,
-        ]
-        .iter()
-        .fold("", |old, new| if old.len() > new.len() { old } else { new });
-        let image = if image_url.is_empty() {
-            Vec::default()
-        } else {
-            ascii::get_image(&image_url, longest_text).unwrap_or_default()
-        };
-        DisplayRecipe {
-            id,
-            title,
-            category,
-            area,
-            ingredients,
-            instructions,
-            tutorial_url,
-            youtube_url,
-            image_url,
-            image_msg: image,
-            infos,
-        }
+            .collect()
     }
 }
 
 #[derive(Serialize, Deserialize, Default)]
 pub struct Recipes {
-    pub meals: Vec<Recipe>,
+    pub meals: Option<Vec<Recipe>>,
 }
 
 impl Recipes {
     pub fn random() -> Result<Self> {
         Ok(get("https://www.themealdb.com/api/json/v1/1/random.php")?.json::<Recipes>()?)
     }
-
     pub fn search(keyword: &str) -> Result<Self> {
         let url = format!("https://www.themealdb.com/api/json/v1/1/search.php?s={keyword}");
-        Ok(get(url)?.json::<Recipes>()?)
+        let response = get(url)?.json::<Recipes>()?;
+        if response.meals.is_none() {
+            anyhow::bail!("No meals found for keyword: {keyword}");
+        }
+        Ok(response)
     }
 }
 
@@ -196,7 +250,7 @@ impl Recipes {
 #[derive(Serialize, Deserialize, Default)]
 pub struct Recipe {
     idMeal: Option<String>,
-    strMeal: Option<String>,
+    pub strMeal: Option<String>,
     strMealAlternate: Option<String>,
     strCategory: Option<String>,
     strArea: Option<String>,
