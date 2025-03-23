@@ -4,17 +4,19 @@ use image::imageops::FilterType;
 use reqwest::blocking::get;
 
 const ASCII: [&str; 6] = [
-    // "$", "@", "B", "%", "8", "&", "W", "M", "#", "*", "o", "a", "h", "k", "b", "d", "p", "q", "w",
-    // "m", "Z", "O", "0", "Q", "L", "C", "J", "U", "Y", "X", "z", "c", "v", "u", "n", "x", "r", "j",
-    // "f", "t", "/", "\\", "|", "(", ")", "1", "{", "}", "[", "]", "?",
-    // "@",
     "$", "@", "%", "&", "#", "*",
 ];
+
+const MAX_WIDTH: u32 = 100;
 
 // To slow
 pub fn get_image(url: &str, longest_text: &str) -> Result<Vec<String>> {
     let (w, _) = term_size::dimensions().context("Not able to get width")?;
-    let image_width = w - format!("         {}", longest_text).len();
+    let mut image_width = w - format!("         {}", longest_text).len();
+    
+    if image_width > MAX_WIDTH as usize {
+        image_width = MAX_WIDTH as usize;
+    }
 
     let bytes = get(url)?.bytes()?;
     // FIX : improve, the blur is too slow
@@ -42,5 +44,6 @@ pub fn get_image(url: &str, longest_text: &str) -> Result<Vec<String>> {
             ascii[i as usize][j as usize] = char.truecolor(r, g, b).to_string();
         }
     }
+    
     Ok(ascii.into_iter().map(|v| v.join("")).collect())
 }
