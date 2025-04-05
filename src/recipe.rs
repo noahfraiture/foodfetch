@@ -1,15 +1,15 @@
+use crate::ascii;
+use crate::cli::Info;
 use anyhow::Result;
 use colored::Colorize;
+use once_cell::sync::Lazy;
 use reqwest::blocking::get;
 use serde::{Deserialize, Serialize};
 use serde_json::from_str;
 use std::sync::Arc;
 use std::{cmp::max, fmt};
-use crate::ascii;
-use crate::cli::Info;
 use strsim::levenshtein;
-use textwrap::{wrap, Options};
-use once_cell::sync::Lazy;
+use textwrap::{Options, wrap};
 
 const MEAL_CACHE_DATA: &str = include_str!("data/meal_cache.json");
 
@@ -31,10 +31,14 @@ struct MealCacheEntry {
     source: Option<String>,
     #[serde(rename = "strYoutube")]
     youtube: Option<String>,
-    #[serde(rename = "strIngredient1")] ing1: Option<String>,
-    #[serde(rename = "strIngredient2")] ing2: Option<String>,
-    #[serde(rename = "strMeasure1")] meas1: Option<String>,
-    #[serde(rename = "strMeasure2")] meas2: Option<String>,
+    #[serde(rename = "strIngredient1")]
+    ing1: Option<String>,
+    #[serde(rename = "strIngredient2")]
+    ing2: Option<String>,
+    #[serde(rename = "strMeasure1")]
+    meas1: Option<String>,
+    #[serde(rename = "strMeasure2")]
+    meas2: Option<String>,
 }
 
 impl MealCacheEntry {
@@ -57,9 +61,8 @@ impl MealCacheEntry {
     }
 }
 
-static MEAL_CACHE: Lazy<Vec<MealCacheEntry>> = Lazy::new(|| {
-    serde_json::from_str(MEAL_CACHE_DATA).unwrap_or_default()
-});
+static MEAL_CACHE: Lazy<Vec<MealCacheEntry>> =
+    Lazy::new(|| serde_json::from_str(MEAL_CACHE_DATA).unwrap_or_default());
 
 fn capitalize_each_word(s: &str) -> String {
     s.split_whitespace()
@@ -79,12 +82,12 @@ pub fn search_with_fuzzy(keyword: &str) -> Result<Recipes> {
     let lowercase = original.to_lowercase();
     let capitalized = capitalize_each_word(&lowercase);
 
-    match Recipes::search(&lowercase).or_else(|_| Recipes::search(&capitalized)) {
-        Ok(r) => return Ok(r),
-        Err(_) => {}  
+    if let Ok(r) = Recipes::search(&lowercase).or_else(|_| Recipes::search(&capitalized)) {
+        return Ok(r);
     }
 
-    if let Some(best_match) = MEAL_CACHE.iter()
+    if let Some(best_match) = MEAL_CACHE
+        .iter()
         .filter(|meal| {
             let distance = levenshtein(&meal.name.to_lowercase(), &lowercase);
             distance <= max(meal.name.len(), lowercase.len()) / 2
@@ -92,10 +95,13 @@ pub fn search_with_fuzzy(keyword: &str) -> Result<Recipes> {
         .min_by_key(|meal| levenshtein(&meal.name.to_lowercase(), &lowercase))
     {
         println!("⚠️  No exact match found for \"{}\".", original);
-        println!("💡 Did you mean: \"{}\"? Using cached data...", best_match.name);
-        
+        println!(
+            "💡 Did you mean: \"{}\"? Using cached data...",
+            best_match.name
+        );
+
         return Ok(Recipes {
-            meals: Some(vec![best_match.clone().to_recipe()])
+            meals: Some(vec![best_match.clone().to_recipe()]),
         });
     }
 
@@ -119,15 +125,30 @@ pub struct DisplayRecipe {
 
 impl fmt::Display for DisplayRecipe {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let show_instructions = self.infos.iter().any(|i| i == &Info::All || i == &Info::Instructions);
-        let show_links = self.infos.iter().any(|i| i == &Info::All || i == &Info::Links);
+        let show_instructions = self
+            .infos
+            .iter()
+            .any(|i| i == &Info::All || i == &Info::Instructions);
+        let show_links = self
+            .infos
+            .iter()
+            .any(|i| i == &Info::All || i == &Info::Links);
         let show_image = self.infos.iter().any(|i| i == &Info::All);
 
-        let mut image = if show_image { self.image_msg.clone() } else { Vec::new() };
+        let mut image = if show_image {
+            self.image_msg.clone()
+        } else {
+            Vec::new()
+        };
         let mut start_lines: Vec<String> = Vec::new();
         let mut end_lines: Vec<String> = Vec::new();
 
-        start_lines.push(format!("\t{} : {} ({})", "Title".red(), self.title, self.id));
+        start_lines.push(format!(
+            "\t{} : {} ({})",
+            "Title".red(),
+            self.title,
+            self.id
+        ));
         start_lines.push(format!("\t{}", "----".red()));
         if !self.category.is_empty() {
             start_lines.push(format!("\t{} : {}", "Category".red(), self.category));
@@ -137,7 +158,11 @@ impl fmt::Display for DisplayRecipe {
         }
         start_lines.push(format!("\t{}", "Ingredients : ".red()));
         for (ingredient, quantity) in &self.ingredients {
-            start_lines.push(format!("\t\t - {ing} ({qty})", ing = ingredient, qty = quantity));
+            start_lines.push(format!(
+                "\t\t - {ing} ({qty})",
+                ing = ingredient,
+                qty = quantity
+            ));
         }
 
         if show_links {
@@ -160,7 +185,7 @@ impl fmt::Display for DisplayRecipe {
         } else {
             start_lines.len() + end_lines.len() + 1
         };
-        
+
         if image.len() < needed_height {
             image.resize(needed_height, String::new());
         }
@@ -172,7 +197,10 @@ impl fmt::Display for DisplayRecipe {
         for (index, line) in start_lines.iter().enumerate() {
             image[index + 1].push_str(line);
         }
-        let start_of_end = max(image.len().saturating_sub(end_lines.len()), start_lines.len() + 1);
+        let start_of_end = max(
+            image.len().saturating_sub(end_lines.len()),
+            start_lines.len() + 1,
+        );
         let needed_for_end = start_of_end + end_lines.len();
         if image.len() < needed_for_end {
             image.resize(needed_for_end, String::new());
@@ -185,11 +213,11 @@ impl fmt::Display for DisplayRecipe {
 
         if show_instructions && !self.instructions.is_empty() {
             write!(f, "\n\n\t{}\n", "Instructions : ".red())?;
-            
+
             let options = Options::new(80)
                 .initial_indent("\t ")
                 .subsequent_indent("\t ");
-                
+
             for line in wrap(&self.instructions, &options) {
                 writeln!(f, "{}", line)?;
             }
@@ -201,59 +229,72 @@ impl fmt::Display for DisplayRecipe {
 
 impl Recipe {
     pub fn to_display_recipe(self, infos: Arc<Vec<Info>>) -> DisplayRecipe {
+        let ingredients = vec![
+            (self.strIngredient1, self.strMeasure1),
+            (self.strIngredient2, self.strMeasure2),
+            (self.strIngredient3, self.strMeasure3),
+            (self.strIngredient4, self.strMeasure4),
+            (self.strIngredient5, self.strMeasure5),
+            (self.strIngredient6, self.strMeasure6),
+            (self.strIngredient7, self.strMeasure7),
+            (self.strIngredient8, self.strMeasure8),
+            (self.strIngredient9, self.strMeasure9),
+            (self.strIngredient10, self.strMeasure10),
+            (self.strIngredient11, self.strMeasure11),
+            (self.strIngredient12, self.strMeasure12),
+            (self.strIngredient13, self.strMeasure13),
+            (self.strIngredient14, self.strMeasure14),
+            (self.strIngredient15, self.strMeasure15),
+            (self.strIngredient16, self.strMeasure16),
+            (self.strIngredient17, self.strMeasure17),
+            (self.strIngredient18, self.strMeasure18),
+            (self.strIngredient19, self.strMeasure19),
+            (self.strIngredient20, self.strMeasure20),
+        ]
+        .into_iter()
+        .filter_map(|(ingredient, quantity)| match (ingredient, quantity) {
+            (Some(ing), Some(qty)) if !ing.is_empty() && !qty.is_empty() => Some((ing, qty)),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+        let id = from_str::<u32>(&self.idMeal.unwrap_or_default()).unwrap_or(0);
+        let title = self.strMeal.unwrap_or_default();
+        let category = self.strCategory.unwrap_or_default();
+        let area = self.strArea.unwrap_or_default();
+        let instructions = self.strInstructions.unwrap_or_default();
+        let tutorial_url = self.strSource.unwrap_or_default();
+        let youtube_url = self.strYoutube.unwrap_or_default();
+        let image_url = self.strMealThumb.unwrap_or_default();
+        let longest_text = [
+            &title,
+            &category,
+            &area,
+            &tutorial_url,
+            &youtube_url,
+            &image_url,
+        ]
+        .iter()
+        .fold("", |old, new| if old.len() > new.len() { old } else { new });
         let show_image = infos.iter().any(|i| i == &Info::All);
-        let image = if show_image && !self.strMealThumb.as_ref().unwrap_or(&String::new()).is_empty() {
-            ascii::get_image(
-                self.strMealThumb.as_ref().unwrap(),
-                self.strMeal.as_ref().unwrap_or(&String::new())
-            ).unwrap_or_default()
+        let image = if show_image && !image_url.is_empty() {
+            ascii::get_image(&image_url, longest_text).unwrap_or_default()
         } else {
             Vec::new()
         };
-              
+
         DisplayRecipe {
-            id: from_str::<u32>(self.idMeal.as_ref().unwrap_or(&String::new())).unwrap_or(0),
-            title: self.strMeal.as_ref().unwrap_or(&String::new()).to_string(),
-            category: self.strCategory.as_ref().unwrap_or(&String::new()).to_string(),
-            area: self.strArea.as_ref().unwrap_or(&String::new()).to_string(),
-            ingredients: self.get_ingredients(),
-            instructions: self.strInstructions.as_ref().unwrap_or(&String::new()).to_string(),
-            tutorial_url: self.strSource.as_ref().unwrap_or(&String::new()).to_string(),
-            youtube_url: self.strYoutube.as_ref().unwrap_or(&String::new()).to_string(),
-            image_url: self.strMealThumb.as_ref().unwrap_or(&String::new()).to_string(),
+            id,
+            title,
+            category,
+            area,
+            ingredients,
+            instructions,
+            tutorial_url,
+            youtube_url,
+            image_url,
             image_msg: image,
             infos,
         }
-    }
-
-    fn get_ingredients(&self) -> Vec<(String, String)> {
-        vec![
-            (self.strIngredient1.clone(), self.strMeasure1.clone()),
-            (self.strIngredient2.clone(), self.strMeasure2.clone()),
-            (self.strIngredient3.clone(), self.strMeasure3.clone()),
-            (self.strIngredient4.clone(), self.strMeasure4.clone()),
-            (self.strIngredient5.clone(), self.strMeasure5.clone()),
-            (self.strIngredient6.clone(), self.strMeasure6.clone()),
-            (self.strIngredient7.clone(), self.strMeasure7.clone()),
-            (self.strIngredient8.clone(), self.strMeasure8.clone()),
-            (self.strIngredient9.clone(), self.strMeasure9.clone()),
-            (self.strIngredient10.clone(), self.strMeasure10.clone()),
-            (self.strIngredient11.clone(), self.strMeasure11.clone()),
-            (self.strIngredient12.clone(), self.strMeasure12.clone()),
-            (self.strIngredient13.clone(), self.strMeasure13.clone()),
-            (self.strIngredient14.clone(), self.strMeasure14.clone()),
-            (self.strIngredient15.clone(), self.strMeasure15.clone()),
-            (self.strIngredient16.clone(), self.strMeasure16.clone()),
-            (self.strIngredient17.clone(), self.strMeasure17.clone()),
-            (self.strIngredient18.clone(), self.strMeasure18.clone()),
-            (self.strIngredient19.clone(), self.strMeasure19.clone()),
-            (self.strIngredient20.clone(), self.strMeasure20.clone()),
-        ].into_iter()
-            .filter_map(|(ingredient, quantity)| match (ingredient, quantity) {
-                (Some(ing), Some(qty)) if !ing.is_empty() && !qty.is_empty() => Some((ing, qty)),
-                _ => None,
-            })
-            .collect()
     }
 }
 
