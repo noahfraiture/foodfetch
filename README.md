@@ -35,4 +35,5 @@ Options:
 
 ## Installation
 
-I've published the package, so you can simply run `cargo install foodfetch`
+I've published the package on cratios.io, so you can simply run `cargo install foodfetch`.
+Alternatively, if you're on Nix, the package is now in the unstable branch
